@@ -1,2 +1,54 @@
-# ovswrap-poc
-CVE-2026-64531 (OVSwrap) PoC - Linux kernel Open vSwitch LPE; for patch validation and security research
+# CVE-2026-64531 — OVSwrap
+
+Linux 内核 **Open vSwitch** 模块本地提权(普通用户 → root)PoC。利用 16 位 `nla_len` 字段的整数回绕,从**普通用户**一路提到 **root**。
+
+## 漏洞简述
+
+OVS 生成的嵌套 action 流超过 65535 字节时,16 位 `nla_len` 字段发生回绕。攻击者仅在私有用户/网络命名空间内持有 `CAP_NET_ADMIN` 即可构造超长 CLONE action,使内核解析器落入攻击者控制的 conntrack 数据,进而获得**任意内核读**与**逐字递减**原语,最终篡改自身凭据提权到 root。
+
+该 bug 源于一个**存在了 13 年**的不安全赋值(commit `74f84a5726c7`),此前受 32 KiB 总长上限保护;2025 年 3 月 commit `a1e64addf3ff` 移除上限后被激活。
+
+- **漏洞编号**: CVE-2026-64531
+- **类型**: 本地权限提升(LPE)
+- **受影响组件**: Linux 内核 `openvswitch` 模块
+- **触发前置**: 普通用户 + `unshare -Urn`(无需初始命名空间权限)
+
+## 受影响 / 修复版本
+
+| 内核系列 | 受影响范围 | 首个修复版本 |
+|---|---|---|
+| 5.15.y | 5.15.180 – 5.15.211 | 5.15.212 |
+| 6.1.y | 6.1.132 – 6.1.177 | 6.1.178 |
+| 6.6.y | 6.6.84 – 6.6.144 | 6.6.145 |
+| 6.12.y | 6.12.20 – 6.12.96 | 6.12.97 |
+| 6.18.y | 6.18.0 – 6.18.39 | 6.18.40 |
+| 7.1.y | 7.1.0 – 7.1.4 | 7.1.5 |
+
+6.13–6.17、6.19、7.0 系列已 EOL,无修复。
+
+## 运行要求
+
+- Linux x86-64,运行受影响/未修补内核
+- OVS conntrack 支持 + **FTP conntrack helper**
+- 非特权用户命名空间可用(`unshare -Urn`),`sudo` 已安装
+- Python 3.7+
+- 推荐 2 GiB+ 内存
+
+## 用法
+
+```bash
+# 必须以普通(非 root)用户运行
+python3 ovswrap-poc.py
+```
+
+脚本会自动 `unshare -Urn` 进入私有用户+网络命名空间;内置约 **800 个 x86-64 内核构建**的预推导偏移表,匹配不到时尝试从 `System.map` / BTF / `pahole` 动态推导。成功后通过向 `/etc/sudoers.d/` 写入条目获得免密 root shell。
+
+## ⚠️ 免责声明
+
+仅供安全研究、漏洞验证与防御性测试使用。该 PoC 会**破坏内核凭据、修改 sudoers 文件、留下僵尸进程与损坏的 OVS 状态**,请务必在**可销毁的虚拟机**中运行,勿在生产或未授权环境执行。
+
+## 归属与参考
+
+- 原 PoC: [manizada/OVSwrap](https://github.com/manizada/OVSwrap)(GPL-2.0),本仓库为分发镜像
+- 技术分析: https://heyitsas.im/posts/ovswrap/
+- 修复 commit: `3f1f755366687d051174739fb99f7d560202f60b`
